@@ -43,6 +43,7 @@ public class VampireController : MonoBehaviour, IEventListener {
 
 
     void Start() {
+        timer = 0.5f;
         bloodPooler = ObjectPooler.instance;
         curMeth = "attack";
         attacked = true;
@@ -54,6 +55,7 @@ public class VampireController : MonoBehaviour, IEventListener {
         blinged = false;
         GAS = 15;
         animator = GetComponent<Animator>();
+
         bloodBulletIndex = bloodPooler.GetIndex(bloodBulletPrefab);
         if (bloodBulletIndex == -1) {
             Debug.LogError("Blood Bullet index not found.");
@@ -64,6 +66,7 @@ public class VampireController : MonoBehaviour, IEventListener {
             Debug.LogError("Bat Bullet index not found.");
             batBulletIndex = 0;
         }
+
         status = GetComponent<EnemyStatus>();
         canTurn = true;
         if (moveLoc == null || moveLoc.Count != 4)
@@ -79,17 +82,28 @@ public class VampireController : MonoBehaviour, IEventListener {
 
     void OnEnable() {
         EventMessanger.GetInstance().SubscribeEvent(typeof(PhaseTransitionEvent), this);
+        EventMessanger.GetInstance().SubscribeEvent(typeof(EnemyStartingDataEvent), this);
+        EventMessanger.GetInstance().SubscribeEvent(typeof(PlayerVictoryEvent), this);
+        EventMessanger.GetInstance().SubscribeEvent(typeof(PlayerDefeatEvent), this);
     }
 
     void OnDisable() {
         EventMessanger.GetInstance().UnsubscribeEvent(typeof(PhaseTransitionEvent), this);
+        EventMessanger.GetInstance().UnsubscribeEvent(typeof(EnemyStartingDataEvent), this);
+        EventMessanger.GetInstance().UnsubscribeEvent(typeof(PlayerVictoryEvent), this);
+        EventMessanger.GetInstance().UnsubscribeEvent(typeof(PlayerDefeatEvent), this);
+
+        EventMessanger.GetInstance().TriggerEvent(new DeleteAttacksEvent(gameObject));
     }
 
     // Update is called once per frame
     void Update() {
-        timer -= Time.deltaTime;
+        if (!bossPaused) {
+            timer -= Time.deltaTime;
+        }
         if (timer <= 0)
         {
+            animator.SetTrigger("EnterIdle");
             setTimer();
         }
         else if (run)
@@ -130,7 +144,6 @@ public class VampireController : MonoBehaviour, IEventListener {
 
     private void setTimer()
     {
-        //Debug.Log("resetting timer");
         //hand.GetComponent<HandAttack>().release();
         canTurn = true;
         grabbed = false;
@@ -266,6 +279,7 @@ public class VampireController : MonoBehaviour, IEventListener {
                 }
                 //yield return new WaitForSeconds(2f / number);
             }
+            AudioManager.GetInstance().PlaySound(Sound.VampireBullet);
             yield return new WaitForSeconds(0.5f);
             animator.SetTrigger("EnterChargeUp");
             yield return new WaitForSeconds(0.5f);
@@ -300,12 +314,14 @@ public class VampireController : MonoBehaviour, IEventListener {
                 bloodBulletScript.setTimer(.5f);
                 bloodBullet.SetActive(true);
             }
+            AudioManager.GetInstance().PlaySound(Sound.VampireBullet);
             yield return new WaitForSeconds(1f);
         }
     }
 
     IEnumerator BatAttack(int numOfBats, Transform playerLoc, int numOfBounces)
     {
+        AudioManager.GetInstance().PlaySound(Sound.VampireBats);
         float angleTar = Mathf.Atan2((playerLoc.position.y - transform.position.y), (playerLoc.position.x - transform.position.x));
         for (int i = 0; i < numOfBats; i++)
         {
@@ -314,6 +330,7 @@ public class VampireController : MonoBehaviour, IEventListener {
             if(batBullet != null)
             {
                 BatBulletController batBulCon = batBullet.GetComponent<BatBulletController>();
+                batBulCon.SetOwner(gameObject);
                 batBulCon.setTarget(batTarget);
                 batBulCon.setPos(transform.position);
                 batBulCon.setBounces(numOfBounces);
@@ -328,6 +345,7 @@ public class VampireController : MonoBehaviour, IEventListener {
             if (batBullet != null)
             {
                 BatBulletController batBulCon = batBullet.GetComponent<BatBulletController>();
+                batBulCon.SetOwner(gameObject);
                 batBulCon.setTarget(batTarget);
                 batBulCon.setPos(transform.position);
                 batBulCon.setBounces(numOfBounces);
@@ -371,7 +389,6 @@ public class VampireController : MonoBehaviour, IEventListener {
                 canTurn = false;
             }
             if (grabbed) {
-                //Debug.Log(timer - Time.time);
                 Vector3 toCenter = new Vector3(-transform.position.x, -transform.position.y);
                 toCenter = Vector3.Normalize(toCenter);
                 if (!(Mathf.Abs(transform.position.x) < .15f) || !(Mathf.Abs(transform.position.y) < .15f)) {
@@ -411,7 +428,6 @@ public class VampireController : MonoBehaviour, IEventListener {
         grabbed = true;
         if(GATime - Time.time < 1f || timer - Time.time < 2f)
         {
-            //Debug.Log("need more time");
             GATime = Time.time + 1.5f;
             timer = Time.time + 4f;
         }
@@ -423,8 +439,43 @@ public class VampireController : MonoBehaviour, IEventListener {
     }
 
     private void TransitionPhases(int nextPhase) {
+        if (nextPhase > 1) {
+            AudioManager.GetInstance().PlaySound(Sound.VampireHiss);
+        }
+        animator.ResetTrigger("EnterIdle");
+        animator.ResetTrigger("EnterChargeUp");
+        animator.SetTrigger("EnterAttack");
         StopFunction();
         StopAllCoroutines();
+    }
+
+    private void DelayStart() {
+        float duration = 2.75f;
+        StartCoroutine(DelayStartSubroutine(duration));
+    }
+
+    private IEnumerator DelayStartSubroutine(float duration) {
+        bossPaused = true;
+        while (duration > 0) {
+            duration -= Time.deltaTime;
+            yield return null;
+        }
+        bossPaused = false;
+    }
+
+    public void KO() {
+        StopAllCoroutines();
+        StopFunction();
+        AudioManager.GetInstance().PlaySound(Sound.VampireHiss);
+        animator.ResetTrigger("EnterIdle");
+        animator.ResetTrigger("EnterChargeUp");
+        animator.SetTrigger("EnterAttack");
+        bossPaused = true;
+    }
+    
+    public void FightOver() {
+        StopFunction();
+        bossPaused = true;
     }
 
     public void StopFunction()
@@ -439,6 +490,7 @@ public class VampireController : MonoBehaviour, IEventListener {
 
     public void StopAttacks() {
         EventMessanger.GetInstance().TriggerEvent(new DeleteAttacksEvent(gameObject));
+        AudioManager.GetInstance().StopSound(Sound.VampireBats);
     }
 
     public void SetPlayerTransform(Transform playerTransform) {
@@ -449,6 +501,14 @@ public class VampireController : MonoBehaviour, IEventListener {
         if (e.GetType() == typeof(PhaseTransitionEvent)) {
             PhaseTransitionEvent phaseTransitionEvent = e as PhaseTransitionEvent;
             TransitionPhases(phaseTransitionEvent.nextPhase);
+        } else if (e.GetType() == typeof(EnemyStartingDataEvent)) {
+            DelayStart();
+            AudioManager.GetInstance().StartMusic(Soundtrack.VampireTheme);
+            AudioManager.GetInstance().StopMusic(Soundtrack.TitleTheme);
+        } else if (e.GetType() == typeof(PlayerVictoryEvent)) {
+            KO();
+        } else if (e.GetType() == typeof(PlayerDefeatEvent)) {
+            FightOver();
         }
     }
 
